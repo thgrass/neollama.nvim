@@ -54,12 +54,25 @@ local function ensure_modifiable(buf, fn)
   if not mod then vim.api.nvim_buf_set_option(buf, "modifiable", false) end
 end
 
-local function append_lines(buf, lines)
+local function append_lines(buf, items)
+  -- Flatten and split any multiline strings into pure lines
+  local safe = {}
+  for _, it in ipairs(items) do
+    if it == nil then
+      table.insert(safe, "")
+    else
+      local s = type(it) == "string" and it or tostring(it)
+      -- keep empty lines; plain split avoids pattern magic
+      local parts = vim.split(s, "\n", { plain = true })
+      vim.list_extend(safe, parts)
+    end
+  end
+
   ensure_modifiable(buf, function()
     local last = vim.api.nvim_buf_line_count(buf)
-    vim.api.nvim_buf_set_lines(buf, last, last, false, lines)
+    vim.api.nvim_buf_set_lines(buf, last, last, false, safe)
   end)
-  -- keep cursor at end
+
   if vim.api.nvim_get_current_buf() == buf then
     local last = vim.api.nvim_buf_line_count(buf)
     vim.api.nvim_win_set_cursor(0, { last, 0 })
