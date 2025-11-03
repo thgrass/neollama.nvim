@@ -6,7 +6,7 @@ local M = {}
 -- Config with defaults
 local config = {
   server_url = "http://127.0.0.1:11434",
-  model = "llama3.1",
+  model = "deepcoder:14b",
   stream = false, -- not implemented (always false in /api/generate)
 }
 
