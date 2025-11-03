@@ -1,4 +1,5 @@
 # neollama.nvim
+# EARLY DEVELOPMENT VERSION/PLAYGROUND. USE AT OWN RISK!!
 
 A minimal Neovim plugin (Lua) to chat with a local **Ollama** instance in a dedicated chat tab, send visual selections, entire buffers, or a set of added buffers to the model, and keep read-only chat history in that tab.
 
