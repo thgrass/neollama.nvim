@@ -6,6 +6,7 @@ A minimal Neovim plugin (Lua) to chat with a local **Ollama** instance in a dedi
 ## Features
 - `:OllamaChat [model]` — open a new chat **tab** with a read-only chat buffer.
 - `:OllamaAsk {text}` — send a one-off prompt to the current chat session.
+- `:OllamaChatClose` — close the chat tab and destroy its buffer.
 - `:OllamaSendSelection` — send the current **visual selection** as context/prompt.
 - `:OllamaSendBuffer` — send the **entire current buffer** content.
 - `:OllamaAddBuffer` — add the **current buffer** to the session's context list.
@@ -92,8 +93,14 @@ Or install manually by copying this folder into your neovim `runtimepath`.
   :OllamaSetServer http://localhost:11434
   ```
 
+- Close Chat Tab & Destroy Chat Buffer:
+  ```vim
+  :OllamaChatClose
+  ```
+
 ## TODO
 - Add streaming and `/api/chat` role-based messages by extending `http_request()` (and its payload).
+- Add chat history to model context.
 - Add support for model prompts and other variables.
 - Improve support for programming tasks.
 - ...
