@@ -122,6 +122,35 @@ function M.open_chat_tab(model)
   end
 end
 
+-- Close a chat tab and destroy its chat buffer
+function close_chat()
+  local chat = "Ollama Chat"
+
+  local bufnr = vim.fn.bufnr(chat)
+  if bufnr == -1 then
+    vim.notify("No '" .. chat .. "' buffer found", vim.log.levels.INFO)
+    return
+  end
+
+  -- Close all windows that show this buffer
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(win) == bufnr then
+      -- force=true so it will close even if there are changes, adjust if you like
+      pcall(vim.api.nvim_win_close, win, true)
+    end
+  end
+
+  -- Now delete the buffer itself
+  if vim.api.nvim_buf_is_valid(bufnr) then
+    vim.api.nvim_buf_delete(bufnr, { force = true })  -- like :bwipeout
+  end
+end
+
+vim.api.nvim_create_user_command("OllamaChatClose", function()
+  close_chat()
+end, {})
+
+
 -- Get or create a session for current chat buffer
 local function session_for_current_chat()
   local buf = get_current_chat_buf()
