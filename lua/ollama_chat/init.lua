@@ -88,29 +88,38 @@ local function normalize_empty(buf)
   end
 end
 
--- Create a new chat in a tab
+-- Create a new chat in a tab or reopen a closed chat buffer
 function M.open_chat_tab(model)
-  vim.cmd("tabnew")
-  local buf = vim.api.nvim_get_current_buf()
-  vim.api.nvim_buf_set_name(buf, "Ollama Chat")
-  vim.api.nvim_buf_set_option(buf, "buftype", "nofile")
-  vim.api.nvim_buf_set_option(buf, "swapfile", false)
-  vim.api.nvim_buf_set_option(buf, "bufhidden", "hide")
-  vim.api.nvim_buf_set_option(buf, "filetype", "markdown")
-  vim.api.nvim_buf_set_option(buf, "modifiable", false)
-  vim.api.nvim_buf_set_var(buf, "ollama_chat", 1)
+  --
+  local name = "Ollama Chat"
 
-  sessions[buf] = {
-    buf = buf,
-    model = model or config.model,
-    added_buffers = {}, -- list of bufnrs
-  }
+  -- reopen existing
+  if vim.fn.bufnr(name) ~= -1 then
+    vim.cmd("tab sbuffer " .. vim.fn.bufnr(name))
+  -- create new
+  else
+    vim.cmd("tabnew")
+    local buf = vim.api.nvim_get_current_buf()
+    vim.api.nvim_buf_set_name(buf, name)
+    vim.api.nvim_buf_set_option(buf, "buftype", "nofile")
+    vim.api.nvim_buf_set_option(buf, "swapfile", false)
+    vim.api.nvim_buf_set_option(buf, "bufhidden", "hide")
+    vim.api.nvim_buf_set_option(buf, "filetype", "markdown")
+    vim.api.nvim_buf_set_option(buf, "modifiable", false)
+    vim.api.nvim_buf_set_var(buf, "ollama_chat", 1)
 
-  append_lines(buf, {
-    "# Ollama Chat",
-    "Model: " .. sessions[buf].model,
-    "",
-  })
+    sessions[buf] = {
+      buf = buf,
+      model = model or config.model,
+      added_buffers = {}, -- list of bufnrs
+    }
+
+    append_lines(buf, {
+      "# Ollama Chat",
+      "Model: " .. sessions[buf].model,
+      "",
+    })
+  end
 end
 
 -- Get or create a session for current chat buffer
