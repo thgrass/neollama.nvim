@@ -1,10 +1,36 @@
 -- ftplugin/ollama_chat.lua
 -- This runs for every buffer with :set filetype=ollama_chat
 
+-- Syntax highlighting on
 vim.cmd("syntax on")
 
 --  Define syntax rules 
 vim.cmd([[
+  " languages for syntax highlighting in fenced markdown blocks in messages
+  syntax include @OllamaCode syntax/python.vim
+  syntax include @OllamaCode sytax/r.vim
+  syntax include @OllamaCode syntax/lua.vim
+  syntax include @OllamaCode syntax/sh.vim
+  syntax include @OllamaCode syntax/bash.vim
+  syntax include @OllamaCode syntax/vim.vim
+  syntax include @OllamaCode syntax/julia.vim
+  syntax include @OllamaCode syntax/c.vim
+  syntax include @OllamaCode syntax/cpp.vim
+  syntax include @OllamaCode syntax/rust.vim
+  syntax include @OllamaCode syntax/javascript.vim
+  syntax include @OllamaCode syntax/typescript.vim
+  syntax include @OllamaCode syntax/html.vim
+  syntax include @OllamaCode syntax/xml.vim
+
+  " Triple-backtick fenced code block, language is ignored textually
+  " but the code inside is highlighted by whatever syntax matches.
+  syntax region OllamaCodeBlock
+        \ matchgroup=OllamaCodeFence
+        \ start='^\s*```.*$'
+        \ end='^\s*```\s*$'
+        \ keepend
+        \ contains=@OllamaCode
+
   " Heading lines: 
   syntax match OllamaHeading /^# .*$/
 
@@ -32,28 +58,10 @@ vim.cmd([[
         \ start=/^\*\*Ollama:\*\*/
         \ end=/^\*\*User:\*\*\|^\*\*Ollama:\*\*\|\%$/
         \ keepend
-        \ contains=OllamaThinkBlock
+        \ contains=OllamaThinkBlock,OllamaCodeBlock
 ]])
 
---  Define highlight groups (colors/style) 
-
-vim.api.nvim_set_hl(0, "OllamaUser", {
-  bold = true,
-})
-
-vim.api.nvim_set_hl(0, "OllamaAssistant", {
-})
-
-vim.api.nvim_set_hl(0, "OllamaThinkBlock", {
-  italic = true,
-})
-
-vim.api.nvim_set_hl(0, "OllamaHeading", {
-  bold = true,
-  underline = true,
-})
-
--- Theme-friendly highlighting: just link to existing groups
+-- Theme-friendly highlighting: link to existing groups + modifiers
 
 vim.api.nvim_set_hl(0, "OllamaUser",      { link = "Identifier" })
 
@@ -64,3 +72,5 @@ vim.api.nvim_set_hl(0, "OllamaModel",     { link = "Comment"    })
 vim.api.nvim_set_hl(0, "OllamaThinkBlock",{ link = "Comment"    })
 
 vim.api.nvim_set_hl(0, "OllamaHeading"   ,{ link = "Special"    })
+
+vim.api.nvim_set_hl(0, "OllamaCodeFence", { link = "Special" })
