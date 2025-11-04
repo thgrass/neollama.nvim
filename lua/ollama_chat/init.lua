@@ -104,8 +104,9 @@ function M.open_chat_tab(model)
     vim.api.nvim_buf_set_option(buf, "buftype", "nofile")
     vim.api.nvim_buf_set_option(buf, "swapfile", false)
     vim.api.nvim_buf_set_option(buf, "bufhidden", "hide")
-    vim.api.nvim_buf_set_option(buf, "filetype", "markdown")
+    vim.api.nvim_buf_set_option(buf, "filetype", "ollama_chat")  -- custom filetype defined in ftplugin/ollama_chat.lua
     vim.api.nvim_buf_set_option(buf, "modifiable", false)
+    --vim.api.nvim_buf_set_option(buf, "diagnostic", false)
     vim.api.nvim_buf_set_var(buf, "ollama_chat", 1)
 
     sessions[buf] = {
