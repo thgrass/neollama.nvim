@@ -280,30 +280,19 @@ function M.ask(text)
 	end)
 end
 
--- Helpers to capture visual selection text from the current buffer
+-- Helpers to capture visual selection text from the current buffer, tab & multibyte safe
 local function get_visual_selection_text()
-	local mode = vim.fn.mode()
-	-- Works even if we're not in visual mode anymore if '< and '> marks are set
-	local start_pos = vim.fn.getpos("'<")
-	local end_pos = vim.fn.getpos("'>")
-	local srow, scol = start_pos[2], start_pos[3]
-	local erow, ecol = end_pos[2], end_pos[3]
-
-	if srow == 0 or erow == 0 then
-		return nil
-	end
+	local s = vim.fn.getpos("'<")
+	local e = vim.fn.getpos("'>")
+	local srow, scol = s[2] - 1, s[3] - 1 -- 0-based start (inclusive)
+	local erow, ecol = e[2] - 1, e[3] -- 0-based end (exclusive)
+	if srow < 0 or erow < 0 then return nil end
 	if erow < srow or (erow == srow and ecol < scol) then
-		-- swap
-		srow, erow = erow, srow
-		scol, ecol = ecol, scol
+		srow, erow, scol, ecol = erow, srow, ecol, scol
 	end
-
-	local lines = vim.api.nvim_buf_get_lines(0, srow - 1, erow, false)
-	if #lines == 0 then return nil end
-
-	lines[1] = string.sub(lines[1], scol, #lines[1])
-	lines[#lines] = string.sub(lines[#lines], 1, ecol)
-	return table.concat(lines, "\n")
+	local parts = vim.api.nvim_buf_get_text(0, srow, scol, erow, ecol, {})
+	if not parts or #parts == 0 then return nil end
+	return table.concat(parts, "\n")
 end
 
 -- Send current visual selection to chat
