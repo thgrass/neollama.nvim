@@ -4,11 +4,11 @@
 -- Syntax highlighting on
 vim.cmd("syntax on")
 
---  Define syntax rules 
+--  Define syntax rules
 vim.cmd([[
   " languages for syntax highlighting in fenced markdown blocks in messages
   syntax include @OllamaCode syntax/python.vim
-  syntax include @OllamaCode sytax/r.vim
+  syntax include @OllamaCode syntax/r.vim
   syntax include @OllamaCode syntax/lua.vim
   syntax include @OllamaCode syntax/sh.vim
   syntax include @OllamaCode syntax/bash.vim
@@ -31,7 +31,7 @@ vim.cmd([[
         \ keepend
         \ contains=@OllamaCode
 
-  " Heading lines: 
+  " Heading lines:
   syntax match OllamaHeading /^# .*$/
 
   " Model line: "Model: .."
@@ -63,14 +63,14 @@ vim.cmd([[
 
 -- Theme-friendly highlighting: link to existing groups + modifiers
 
-vim.api.nvim_set_hl(0, "OllamaUser",      { link = "Identifier" })
+vim.api.nvim_set_hl(0, "OllamaUser", { link = "Identifier" })
 
-vim.api.nvim_set_hl(0, "OllamaAssistant", { link = "Statement"  })
+vim.api.nvim_set_hl(0, "OllamaAssistant", { link = "Statement" })
 
-vim.api.nvim_set_hl(0, "OllamaModel",     { link = "Comment"    })
+vim.api.nvim_set_hl(0, "OllamaModel", { link = "Comment" })
 
-vim.api.nvim_set_hl(0, "OllamaThinkBlock",{ link = "Comment"    })
+vim.api.nvim_set_hl(0, "OllamaThinkBlock", { link = "Comment" })
 
-vim.api.nvim_set_hl(0, "OllamaHeading"   ,{ link = "Special"    })
+vim.api.nvim_set_hl(0, "OllamaHeading", { link = "Special" })
 
 vim.api.nvim_set_hl(0, "OllamaCodeFence", { link = "Special" })
