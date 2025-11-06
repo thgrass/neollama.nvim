@@ -13,23 +13,11 @@ local config = {
 -- Sessions keyed by chat buffer number
 local sessions = {}
 
--- Utility: shallow copy
-local function tbl_copy(t)
-	local o = {}
-	for k, v in pairs(t) do o[k] = v end
-	return o
-end
-
 -- Setup
 function M.setup(opts)
 	if opts then
 		for k, v in pairs(opts) do config[k] = v end
 	end
-end
-
--- Helpers to manage chat buffers
-local function is_chat_buf(bufnr)
-	return vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_buf_get_var(bufnr, "ollama_chat") == 1
 end
 
 local function get_current_chat_buf()
@@ -48,10 +36,16 @@ local function get_current_chat_buf()
 end
 
 local function ensure_modifiable(buf, fn)
-	local mod = vim.api.nvim_buf_get_option(buf, "modifiable")
-	if not mod then vim.api.nvim_buf_set_option(buf, "modifiable", true) end
+	local prev = vim.bo[buf].modifiable
+	if not prev then
+		vim.bo[buf].modifiable = true
+	end
+
 	fn()
-	if not mod then vim.api.nvim_buf_set_option(buf, "modifiable", false) end
+
+	if not prev then
+		vim.bo[buf].modifiable = false
+	end
 end
 
 local function append_lines(buf, items)
@@ -79,34 +73,41 @@ local function append_lines(buf, items)
 	end
 end
 
-local function normalize_empty(buf)
-	if vim.api.nvim_buf_line_count(buf) == 1 then
-		local l = vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1]
-		if l == "" or l == nil then
-			return
-		end
-	end
-end
-
 -- Create a new chat in a tab or reopen a closed chat buffer
 function M.open_chat_tab(model)
-	--
 	local name = "Ollama Chat"
+	local existing = vim.fn.bufnr(name)
 
 	-- reopen existing
-	if vim.fn.bufnr(name) ~= -1 then
-		vim.cmd("tab sbuffer " .. vim.fn.bufnr(name))
+	if existing ~= -1 then
+		vim.cmd("tab sbuffer " .. existing)
+		local buf = existing
+
+		-- make sure we have a session for this buffer
+		if not sessions[buf] then
+			sessions[buf] = {
+				buf = buf,
+				model = model or config.model,
+				added_buffers = {},
+			}
+		elseif model then
+			-- allow overriding model when reopening
+			sessions[buf].model = model
+		end
+
 		-- create new
 	else
 		vim.cmd("tabnew")
 		local buf = vim.api.nvim_get_current_buf()
 		vim.api.nvim_buf_set_name(buf, name)
-		vim.api.nvim_buf_set_option(buf, "buftype", "nofile")
-		vim.api.nvim_buf_set_option(buf, "swapfile", false)
-		vim.api.nvim_buf_set_option(buf, "bufhidden", "hide")
-		vim.api.nvim_buf_set_option(buf, "filetype", "ollama_chat") -- custom filetype defined in ftplugin/ollama_chat.lua
-		vim.api.nvim_buf_set_option(buf, "modifiable", false)
-		--vim.api.nvim_buf_set_option(buf, "diagnostic", false)
+
+		-- use new-style option API (buffer-local)
+		vim.bo[buf].buftype    = "nofile"
+		vim.bo[buf].swapfile   = false
+		vim.bo[buf].bufhidden  = "hide"
+		vim.bo[buf].filetype   = "ollama_chat" -- custom ft in ftplugin/ollama_chat.lua
+		vim.bo[buf].modifiable = false
+
 		vim.api.nvim_buf_set_var(buf, "ollama_chat", 1)
 
 		sessions[buf] = {
@@ -124,7 +125,7 @@ function M.open_chat_tab(model)
 end
 
 -- Close a chat tab and destroy its chat buffer
-function close_chat()
+function M.close_chat()
 	local chat = "Ollama Chat"
 
 	local bufnr = vim.fn.bufnr(chat)
@@ -148,7 +149,7 @@ function close_chat()
 end
 
 vim.api.nvim_create_user_command("OllamaChatClose", function()
-	close_chat()
+	M.close_chat()
 end, {})
 
 
@@ -306,6 +307,7 @@ function M.send_visual_selection()
 	local name = vim.api.nvim_buf_get_name(0)
 	local prompt = string.format("Analyze the following selection from file: %s\n\n%s",
 		name ~= "" and name or "[No Name]", text)
+
 	M.ask(prompt)
 end
 
