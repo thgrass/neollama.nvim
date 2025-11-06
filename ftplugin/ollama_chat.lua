@@ -4,6 +4,11 @@
 -- Syntax highlighting on
 vim.cmd("syntax on")
 
+-- fold level, style for think block
+vim.opt_local.foldmethod = "syntax"
+vim.opt_local.foldenable = true
+vim.opt_local.foldlevel = 0
+
 --  Define syntax rules
 vim.cmd([[
   " languages for syntax highlighting in fenced markdown blocks in messages
@@ -21,6 +26,7 @@ vim.cmd([[
   syntax include @OllamaCode syntax/typescript.vim
   syntax include @OllamaCode syntax/html.vim
   syntax include @OllamaCode syntax/xml.vim
+  syntax include @OllamaCode syntax/asm.vim
 
   " Triple-backtick fenced code block, language is ignored textually
   " but the code inside is highlighted by whatever syntax matches.
@@ -38,11 +44,10 @@ vim.cmd([[
   syntax match OllamaModel /^Model: .*$/
 
   " <think> ... </think> block (multi-line)
-  " hide only the tags
   syntax region OllamaThinkBlock
         \ start=+<think>+
         \ end=+</think>+
-        \ concealends
+	\ fold
         \ keepend
 
   " USER BLOCK:
