@@ -187,6 +187,7 @@ end
 -- HTTP call via curl using jobstart, piped stdin
 local function http_generate(sess, prompt_text, on_done)
 	local url = (config.server_url or "http://127.0.0.1:11434") .. "/api/generate"
+
 	local payload_tbl = {
 		model = sess.model or config.model,
 		prompt = prompt_text,
@@ -194,43 +195,57 @@ local function http_generate(sess, prompt_text, on_done)
 	}
 	local payload = vim.fn.json_encode(payload_tbl)
 
-	local stdout_chunks = {}
-	local stderr_chunks = {}
+	local stdout_chunks, stderr_chunks = {}, {}
 
-	-- Build command string
-	local cmd = { "curl", "-sS", "-X", "-f",
-		"POST", "-H", "Content-Type: application/json",
-		url, "--data-binary",
-		"@-" -- read payload from stdin
+	local cmd = {
+		"curl",
+		"-sS", "-f", -- quiet but fail on HTTP 4xx/5xx
+		"-X", "POST",
+		"-H", "Content-Type: application/json",
+		url,
+		"--data-binary", "@-", -- read JSON body from stdin
 	}
 
 	local job_id = vim.fn.jobstart(cmd, {
 		stdin = "pipe",
 		stdout_buffered = true,
 		stderr_buffered = true,
+
 		on_stdout = function(_, data, _)
-			if data then
+			if data and #data > 0 then
 				table.insert(stdout_chunks, table.concat(data, "\n"))
 			end
 		end,
+
 		on_stderr = function(_, data, _)
-			if data then
+			if data and #data > 0 then
 				table.insert(stderr_chunks, table.concat(data, "\n"))
 			end
 		end,
+
 		on_exit = function(_, code, _)
 			local out = table.concat(stdout_chunks, "")
 			local err = table.concat(stderr_chunks, "")
+
 			if code ~= 0 then
-				on_done(nil, ("HTTP error (curl exit %d): %s"):format(code, err:gsub("%s+$", "")))
+				-- curl -f: on 4xx/5xx it sets nonzero exit and puts a message on stderr
+				local msg = err ~= "" and err or out
+				msg = msg:gsub("%s+$", "")
+				on_done(nil, ("HTTP error (curl exit %d): %s"):format(code, msg))
 				return
 			end
-			-- Ollama returns JSON with a `response` field when stream=false
+
+			if out == "" then
+				on_done(nil, "Empty response from Ollama")
+				return
+			end
+
 			local ok, decoded = pcall(vim.fn.json_decode, out)
 			if not ok or type(decoded) ~= "table" then
-				on_done(nil, "Failed to parse JSON: " .. tostring(out))
+				on_done(nil, "Failed to parse JSON from Ollama: " .. out)
 				return
 			end
+
 			on_done(decoded.response or "", nil)
 		end,
 	})
@@ -240,7 +255,7 @@ local function http_generate(sess, prompt_text, on_done)
 		return
 	end
 
-	-- send payload JSON over stdin
+	-- send JSON payload via stdin
 	vim.fn.chansend(job_id, payload)
 	vim.fn.chanclose(job_id, "stdin")
 end
