@@ -8,6 +8,17 @@ local config = {
 	server_url = "http://127.0.0.1:11434",
 	model = "deepcoder:14b",
 	stream = false, -- not implemented (always false in /api/generate)
+
+	system_prompts = {
+		default = "",
+		python = "",
+		lua = ""
+	},
+	user_prompts = {
+		welcome = "",
+		help_explain = "",
+		help_debug = ""
+	},
 }
 
 -- Sessions keyed by chat buffer number
