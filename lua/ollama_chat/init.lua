@@ -1,4 +1,3 @@
--- lua/ollama_chat/init.lua
 -- Interface/chat with an ollama server using 'curl'.
 
 local M = {}
@@ -7,7 +6,7 @@ local M = {}
 local config = {
 	server_url = "http://127.0.0.1:11434",
 	model = "deepcoder:14b",
-	stream = false, -- not implemented (always false in /api/generate)
+	stream = true,
 
 	system_prompts = {
 		default = "",
@@ -163,7 +162,6 @@ vim.api.nvim_create_user_command("OllamaChatClose", function()
 	M.close_chat()
 end, {})
 
-
 -- Get or create a session for current chat buffer
 local function session_for_current_chat()
 	local buf = get_current_chat_buf()
@@ -196,99 +194,162 @@ local function build_prompt_with_context(sess, prompt_text)
 	return table.concat(pieces, "\n")
 end
 
--- HTTP call via curl using jobstart, piped stdin
-local function http_generate(sess, prompt_text, on_done)
+-- HTTP call via curl using jobstart, piped stdin.  In streaming mode,
+-- this function yields partial responses as they arrive.
+local function http_generate(prompt_text, on_done)
 	local url = (config.server_url or "http://127.0.0.1:11434") .. "/api/generate"
 
+	-- Build the JSON payload.  The `stream` flag is passed through to enable or disable
+	-- incremental output from the server.
 	local payload_tbl = {
-		model = sess.model or config.model,
+		model = config.model,
 		prompt = prompt_text,
-		stream = false,
+		stream = config.stream,
 	}
 	local payload = vim.fn.json_encode(payload_tbl)
 
+	-- We'll accumulate stderr in case of errors and stream stdout chunks to the callback.
 	local stdout_chunks, stderr_chunks = {}, {}
 
+	-- Curl command for the POST request.  The -N flag disables buffering so that
+	-- partial responses are flushed immediately.  We read the request body from
+	-- stdin via `@-`.
 	local cmd = {
 		"curl",
-		"-sS", "-f", -- quiet but fail on HTTP 4xx/5xx
+		"-s", -- Quiet mode: suppress progress meter
+		"-N", -- Disable stdout buffering
 		"-X", "POST",
 		"-H", "Content-Type: application/json",
 		url,
-		"--data-binary", "@-", -- read JSON body from stdin
+		"--data-binary", "@-",
 	}
 
 	local job_id = vim.fn.jobstart(cmd, {
 		stdin = "pipe",
-		stdout_buffered = true,
-		stderr_buffered = true,
+		-- Do not buffer stdout/stderr; deliver chunks as soon as they arrive
+		stdout_buffered = false,
+		stderr_buffered = false,
 
 		on_stdout = function(_, data, _)
-			if data and #data > 0 then
-				table.insert(stdout_chunks, table.concat(data, "\n"))
+			-- `data` is a list of partial lines.  Concatenate and emit non-empty chunks.
+			if data then
+				local chunk = table.concat(data, "\n")
+				if #chunk > 0 then
+					table.insert(stdout_chunks, chunk)
+					on_done(chunk, nil)
+				end
 			end
 		end,
 
 		on_stderr = function(_, data, _)
-			if data and #data > 0 then
-				table.insert(stderr_chunks, table.concat(data, "\n"))
+			if data then
+				local chunk = table.concat(data, "\n")
+				if #chunk > 0 then
+					table.insert(stderr_chunks, chunk)
+				end
 			end
 		end,
 
-		on_exit = function(_, code, _)
-			local out = table.concat(stdout_chunks, "")
-			local err = table.concat(stderr_chunks, "")
-
-			if code ~= 0 then
-				-- curl -f: on 4xx/5xx it sets nonzero exit and puts a message on stderr
-				local msg = err ~= "" and err or out
-				msg = msg:gsub("%s+$", "")
-				on_done(nil, ("HTTP error (curl exit %d): %s"):format(code, msg))
-				return
+		on_exit = function()
+			-- If there were any stderr messages, surface them as an error.  Otherwise,
+			-- no further action is needed because stdout has already been streamed.
+			if #stderr_chunks > 0 then
+				on_done(nil, table.concat(stderr_chunks, ""))
 			end
-
-			if out == "" then
-				on_done(nil, "Empty response from Ollama")
-				return
-			end
-
-			local ok, decoded = pcall(vim.fn.json_decode, out)
-			if not ok or type(decoded) ~= "table" then
-				on_done(nil, "Failed to parse JSON from Ollama: " .. out)
-				return
-			end
-
-			on_done(decoded.response or "", nil)
 		end,
 	})
 
-	if job_id <= 0 then
-		on_done(nil, "Failed to start curl process. Is curl installed?")
-		return
+	-- Send the payload to the job's stdin.  Use `nvim_chan_send` (or chansend)
+	-- instead of the unavailable `job_send`.  After writing the payload, close
+	-- the stdin channel to signal end-of-input.
+	vim.api.nvim_chan_send(job_id, payload)
+	-- Closing the stdin stream flushes the request body.  Without this, curl would
+	-- block waiting for more input.
+	if vim.fn.chanclose then
+		-- chanclose() is available in newer Neovim versions
+		pcall(vim.fn.chanclose, job_id, "stdin")
 	end
-
-	-- send JSON payload via stdin
-	vim.fn.chansend(job_id, payload)
-	vim.fn.chanclose(job_id, "stdin")
 end
 
 -- Ask raw text "text" in current chat
-function M.ask(text)
-	if not text or text == "" then
-		vim.notify("Ollama: empty prompt", vim.log.levels.WARN)
-		return
-	end
+M.ask = function(text, on_done)
+	-- Always obtain the session for current buffer
 	local sess = session_for_current_chat()
-	append_lines(sess.buf, { "**User:** " .. text, "" })
 
+	-- Echo the user's question in the chat buffer when interactive
+	if not on_done then
+		append_lines(sess.buf, { "**User:** " .. text, "" })
+	end
+
+	-- Build the full prompt including any added buffer context
 	local full_prompt = build_prompt_with_context(sess, text)
 
-	http_generate(sess, full_prompt, function(reply, err)
+	-- Accumulate the streaming response.  We'll parse each JSON message and
+	-- append only the `response` tokens.  We update the display incrementally
+	-- to provide streaming feedback.  When `done` is true, a blank line is
+	-- appended and any callback is invoked with the full response.
+	local response_accum = ""
+	-- Track where the assistant output starts (0-based index) and how many
+	-- buffer lines we've written, so we can update them in-place.
+	local assist_start_line = nil
+	local assist_line_count = 0
+	-- Helper to update the buffer display based on the current response
+	local function update_display(final)
+		-- Split accumulated response into lines to preserve newline boundaries.
+		local content_lines = vim.split(response_accum, "\n", { plain = true })
+		if #content_lines == 0 then content_lines = { "" } end
+		-- Build the displayed lines: a header on its own line, followed by the
+		-- content lines.  This keeps tags like <think> on their own lines, so
+		-- folding logic in the ftplugin works properly.
+		local lines = { "**Ollama:**" }
+		for _, l in ipairs(content_lines) do
+			table.insert(lines, l)
+		end
+		local buf = sess.buf
+		if not assist_start_line then
+			assist_start_line = vim.api.nvim_buf_line_count(buf)
+			append_lines(buf, lines)
+			assist_line_count = #lines
+		else
+			-- Temporarily make the buffer modifiable to update lines in-place.
+			ensure_modifiable(buf, function()
+				vim.api.nvim_buf_set_lines(buf, assist_start_line, assist_start_line + assist_line_count,
+					false, lines)
+			end)
+			assist_line_count = #lines
+		end
+		if final then
+			append_lines(buf, { "" })
+		end
+	end
+
+	http_generate(full_prompt, function(chunk, err)
 		if err then
 			append_lines(sess.buf, { "**Error:** " .. err, "" })
+			if on_done then on_done(nil, err) end
 			return
 		end
-		append_lines(sess.buf, { "**Ollama:**", reply or "", "" })
+		if not chunk or #chunk == 0 then return end
+		local finished = false
+		for line in string.gmatch(chunk, "[^\n]+") do
+			local ok, obj = pcall(vim.fn.json_decode, line)
+			if ok and type(obj) == "table" then
+				if obj.response and obj.response ~= vim.NIL then
+					response_accum = response_accum .. obj.response
+				end
+				if obj.done then
+					finished = true
+				end
+			end
+		end
+		-- Update display after processing the batch.  If finished, append blank line.
+		update_display(finished)
+		if finished then
+			if on_done then on_done(response_accum, nil) end
+			response_accum = ""
+			assist_start_line = nil
+			assist_line_count = 0
+		end
 	end)
 end
 
