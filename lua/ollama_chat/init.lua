@@ -251,22 +251,16 @@ local function http_generate(prompt_text, on_done)
 		end,
 
 		on_exit = function()
-			-- If there were any stderr messages, surface them as an error.  Otherwise,
-			-- no further action is needed because stdout has already been streamed.
+			-- If there were any stderr messages, surface them as an error. 
 			if #stderr_chunks > 0 then
 				on_done(nil, table.concat(stderr_chunks, ""))
 			end
 		end,
 	})
 
-	-- Send the payload to the job's stdin.  Use `nvim_chan_send` (or chansend)
-	-- instead of the unavailable `job_send`.  After writing the payload, close
-	-- the stdin channel to signal end-of-input.
+	-- After writing the payload, close the stdin channel to signal end-of-input.
 	vim.api.nvim_chan_send(job_id, payload)
-	-- Closing the stdin stream flushes the request body.  Without this, curl would
-	-- block waiting for more input.
 	if vim.fn.chanclose then
-		-- chanclose() is available in newer Neovim versions
 		pcall(vim.fn.chanclose, job_id, "stdin")
 	end
 end
