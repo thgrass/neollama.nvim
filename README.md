@@ -16,7 +16,8 @@ A minimal Neovim plugin (Lua) to chat with a local **Ollama** instance in a dedi
 - `:OllamaSetServer {url}` — change the server URL (default: `http://127.0.0.1:11434`).
 
 > The chat buffer is **read-only**; you interact using commands. History remains visible within the tab.  
-> This plugin uses external `curl` to call Ollama's HTTP API (`/api/generate`) with `stream=false`.
+> This plugin uses external `curl` to call Ollama's HTTP API (`/api/generate`) either buffered/streamed to neovim,
+> or not (set in config with stream=true|false).
 
 ## Requirements
 - Neovim 0.8+
@@ -99,7 +100,6 @@ Or install manually by copying this folder into your neovim `runtimepath`.
   ```
 
 ## TODO
-- Add streaming and `/api/chat` role-based messages by extending `http_request()` (and its payload).
 - Add chat history to model context.
 - Add support for model prompts and other variables.
 - Improve support for programming tasks.
