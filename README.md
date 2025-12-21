@@ -34,7 +34,7 @@ A minimal Neovim plugin (Lua) to chat with a local **Ollama** instance in a dedi
     require("ollama_chat").setup({
       server_url = "http://127.0.0.1:11434",
       model = "llama3.1",
-      stream = false, -- streaming not implemented yet
+      stream = true,
     })
   end,
 }
