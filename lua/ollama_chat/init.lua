@@ -465,8 +465,20 @@ M.ask = function(text, on_done)
 	local assist_start_line = nil
 	local assist_line_count = 0
 	local finished = false
+	-- Throttle display rewrites during streaming: rewriting the whole
+	-- assistant region on every token is O(n^2) overall and burns CPU on
+	-- long responses.  A ~100ms interval keeps streaming smooth.
+	local last_display = 0
 	-- Helper to update the buffer display based on the current response
 	local function update_display(final)
+		if not final then
+			local uv = vim.uv or vim.loop
+			local now = uv.hrtime()
+			if now - last_display < 100 * 1000 * 1000 then
+				return
+			end
+			last_display = now
+		end
 		if not vim.api.nvim_buf_is_valid(sess.buf) then
 			return
 		end
@@ -499,6 +511,23 @@ M.ask = function(text, on_done)
 				)
 			end)
 			assist_line_count = #lines
+		end
+		-- While streaming, raise foldlevel so the think block stays visible
+		-- (folds are recreated closed after every buffer rewrite).  When the
+		-- response completes, restore foldlevel so think blocks render as a
+		-- single closed fold, and move the cursor to the answer.
+		local winnr = vim.fn.bufwinnr(buf)
+		if winnr ~= -1 then
+			local win = vim.fn.win_getid(winnr)
+			local from = assist_start_line and (assist_start_line + 1) or 1
+			pcall(vim.api.nvim_win_call, win, function()
+				if final then
+					vim.wo.foldlevel = 0
+					vim.cmd("silent keepjumps normal! " .. from .. "G")
+				else
+					vim.wo.foldlevel = 99
+				end
+			end)
 		end
 		if final then
 			append_lines(buf, { "" })
