@@ -249,9 +249,6 @@ local function ollama_update_fenced_syntax()
 	)
 	vim.cmd("syntax cluster OllamaAllCode add=OllamaCodeBlock_plain")
 
-	-- preserve & restore b:current_syntax across includes
-	local prev_syn = vim.b.current_syntax
-
 	for _, lang in ipairs(order) do
 		-- Only include syntax files that exist on the runtimepath; the tag
 		-- is also validated against a safe charset above, so this cannot
@@ -295,11 +292,6 @@ local function ollama_update_fenced_syntax()
 	end
 
 	vim.b.ollama_fence_langs = order
-	if prev_syn then
-		vim.b.current_syntax = prev_syn
-	else
-		vim.b.current_syntax = nil
-	end
 end
 
 -- Debounce the (relatively expensive) syntax refresh so streaming

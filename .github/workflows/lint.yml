@@ -16,8 +16,12 @@ jobs:
         with:
           version: latest
           token: ${{ secrets.GITHUB_TOKEN }}
+          directories: "lua plugin ftplugin"
+
+      - name: Install Luacheck
+        run: |
+          sudo apt-get update && sudo apt-get install -y luarocks
+          sudo luarocks install luacheck
 
       - name: Luacheck
-        uses: lunarmodules/luacheck@v1
-        with:
-          args: lua plugin ftplugin
+        run: luacheck lua plugin ftplugin
