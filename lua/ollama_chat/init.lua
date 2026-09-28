@@ -823,33 +823,159 @@ end
 
 -- ===== Smarter context: symbol under cursor or visible window =====
 
--- Build context text around the cursor: the treesitter node for the
--- enclosing definition when nvim-treesitter is available, otherwise the
--- visible window range.
-local function build_cursor_context()
-	local buf = vim.api.nvim_get_current_buf()
+-- Build context text around the cursor, using the best source available:
+--   1. Built-in treesitter: the enclosing named definition (works with any
+--      installed parser, no plugin required)
+--   2. nvim-treesitter (optional plugin): same idea via its utils
+--   3. LSP documentSymbol: the deepest symbol containing the cursor
+--   4. Fallback: the visible window range
+-- Substrings that identify definition-like node types across
+-- tree-sitter grammars (Lua patterns have no alternation, so we
+-- check each one explicitly).
+local TS_SYMBOL_TYPES = { "function", "method", "class", "struct", "definition", "declaration" }
 
-	-- Preferred: treesitter node for the enclosing definition
+local function is_symbol_node(t)
+	for _, s in ipairs(TS_SYMBOL_TYPES) do
+		if t:find(s, 1, true) then
+			return true
+		end
+	end
+	return false
+end
+
+local function ts_node_text(buf, node)
+	local sr, sc, er, ec = node:range()
+	if er <= sr and ec <= sc then
+		return nil
+	end
+	local text = table.concat(vim.api.nvim_buf_get_text(buf, sr, sc, er, ec, {}), "\n")
+	if text == "" then
+		return nil
+	end
+	return text
+end
+
+local function context_from_builtin_ts(buf)
+	-- vim.treesitter.get_node returns nil until the buffer has been parsed;
+	-- ensure a parser exists and a parse has happened before querying the node.
+	local ok_parser, parser = pcall(vim.treesitter.get_parser, buf)
+	if not ok_parser or not parser then
+		return nil
+	end
+	pcall(parser.parse, parser)
+	local ok, node = pcall(vim.treesitter.get_node, { bufnr = buf })
+	if not ok or not node then
+		-- try the older API name
+		local pos = vim.api.nvim_win_get_cursor(0)
+		local ok2, node2 =
+			pcall(vim.treesitter.get_node_at_pos, buf, pos[1] - 1, pos[2], { ignore_injections = false })
+		if not ok2 then
+			return nil
+		end
+		node = node2
+	end
+	while node do
+		local okt, t = pcall(node.type, node)
+		if okt and is_symbol_node(t) then
+			local text = ts_node_text(buf, node)
+			if text then
+				return text, "symbol (treesitter)"
+			end
+		end
+		local okp, parent = pcall(node.parent, node)
+		if not okp then
+			return nil
+		end
+		node = parent
+	end
+	return nil
+end
+
+local function context_from_plugin_ts(buf)
 	local ok_ts, ts_utils = pcall(require, "nvim-treesitter.ts_utils")
-	if ok_ts then
-		local node = ts_utils.get_node_at_cursor()
-		while node do
-			local t = node:type()
-			if
-				t:match("^function")
-				or t:match("^method")
-				or t == "class_definition"
-				or t == "class_declaration"
-				or t == "function_declaration"
-			then
-				local sr, sc, er, ec = node:range()
-				local text = table.concat(vim.api.nvim_buf_get_text(buf, sr, sc, er, ec, {}), "\n")
-				if text ~= "" then
-					return text, "symbol (treesitter)"
+	if not ok_ts or type(ts_utils.get_node_at_cursor) ~= "function" then
+		return nil
+	end
+	local ok_node, node = pcall(ts_utils.get_node_at_cursor)
+	if not ok_node or not node then
+		return nil
+	end
+	while node do
+		local t = node:type()
+		if is_symbol_node(t) then
+			local text = ts_node_text(buf, node)
+			if text then
+				return text, "symbol (treesitter)"
+			end
+		end
+		node = node:parent()
+	end
+	return nil
+end
+
+-- Deepest LSP documentSymbol whose range contains the cursor row.
+local function context_from_lsp(buf, row)
+	local clients = {}
+	if vim.lsp.get_clients then
+		clients = vim.lsp.get_clients({ bufnr = buf })
+	elseif vim.lsp.get_active_clients then
+		clients = vim.lsp.get_active_clients({ bufnr = buf })
+	end
+	if #clients == 0 then
+		return nil
+	end
+	local params = { textDocument = vim.lsp.util.make_text_document_params() }
+	local results = vim.lsp.buf_request_sync(buf, "textDocument/documentSymbol", params, 2000)
+	if not results then
+		return nil
+	end
+	local best = nil -- { name, start_row, end_row, depth }
+	local function walk(symbols, depth)
+		for _, s in ipairs(symbols or {}) do
+			local range = s.range or (s.location and s.location.range)
+			if range then
+				local sr, er = range.start.line, range["end"].line
+				if row >= sr and row <= er then
+					if not best or depth > best.depth then
+						best = { name = s.name or "?", start_row = sr, end_row = er, depth = depth }
+					end
+					walk(s.children, depth + 1)
 				end
 			end
-			node = node:parent()
 		end
+	end
+	for _, res in pairs(results) do
+		if res.result then
+			walk(res.result, 1)
+		end
+	end
+	if not best then
+		return nil
+	end
+	local text =
+		table.concat(vim.api.nvim_buf_get_lines(buf, best.start_row, best.end_row + 1, false), "\n")
+	if text == "" then
+		return nil
+	end
+	return text, ("symbol %s (lsp)"):format(best.name)
+end
+
+local function build_cursor_context()
+	local buf = vim.api.nvim_get_current_buf()
+	local row = vim.api.nvim_win_get_cursor(0)[1] - 1
+
+	local text, desc = context_from_builtin_ts(buf)
+	if not text then
+		text, desc = context_from_plugin_ts(buf)
+	end
+	if not text then
+		local ok_lsp, t2, d2 = pcall(context_from_lsp, buf, row)
+		if ok_lsp then
+			text, desc = t2, d2
+		end
+	end
+	if text then
+		return text, desc
 	end
 
 	-- Fallback: visible window range
@@ -857,8 +983,8 @@ local function build_cursor_context()
 	local top = vim.fn.line("w0", win)
 	local bot = vim.fn.line("w$", win)
 	if top > 0 and bot >= top then
-		local text = table.concat(vim.api.nvim_buf_get_lines(buf, top - 1, bot, false), "\n")
-		return text, ("lines %d-%d"):format(top, bot)
+		local wtext = table.concat(vim.api.nvim_buf_get_lines(buf, top - 1, bot, false), "\n")
+		return wtext, ("lines %d-%d"):format(top, bot)
 	end
 	return nil, nil
 end
