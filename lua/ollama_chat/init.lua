@@ -523,20 +523,18 @@ M.ask = function(text, on_done)
 			end)
 			assist_line_count = #lines
 		end
-		-- While streaming, raise foldlevel so the think block stays visible
-		-- (folds are recreated closed after every buffer rewrite).  When the
-		-- response completes, collapse the think block again.  The option is
-		-- set via the win-scoped API so it also works when the chat lives in
-		-- another tabpage; nvim_win_call would fail there silently.
+		-- Keep the think block collapsed at all times, including while it
+		-- is being streamed; users who want to read the reasoning expand
+		-- the fold manually (za).  The option is set via the win-scoped API
+		-- so it also works when the chat lives in another tabpage;
+		-- nvim_win_call would fail there silently.
 		local winnr = vim.fn.bufwinnr(buf)
 		if winnr ~= -1 then
 			local win = vim.fn.win_getid(winnr)
 			local from = assist_start_line and (assist_start_line + 1) or 1
-			pcall(vim.api.nvim_set_option_value, "foldlevel", final and 0 or 99, { win = win })
+			pcall(vim.api.nvim_set_option_value, "foldlevel", 0, { win = win })
 			if final then
 				pcall(vim.api.nvim_win_call, win, function()
-					-- foldlevel=99 during streaming re-opened older think
-					-- blocks too, so collapse the whole buffer again.
 					vim.cmd("silent! 1,$foldclose!")
 					vim.cmd("silent keepjumps normal! " .. from .. "G")
 				end)
@@ -561,9 +559,6 @@ M.ask = function(text, on_done)
 
 	local function finish(err)
 		sess.job_id = nil
-		if _G.OllamaSetStreaming then
-			_G.OllamaSetStreaming(false)
-		end
 		-- Only touch the display if some content was already shown
 		if response_accum ~= "" or assist_start_line then
 			update_display(err == nil)
@@ -587,9 +582,6 @@ M.ask = function(text, on_done)
 		response_accum = ""
 	end
 
-	if _G.OllamaSetStreaming then
-		_G.OllamaSetStreaming(true)
-	end
 	local job
 	job = http_request(payload, function(line)
 		-- Ignore late frames from a job that was cancelled or superseded
