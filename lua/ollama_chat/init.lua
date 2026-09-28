@@ -554,13 +554,24 @@ M.ask = function(text, on_done)
 			-- buffer rewrites recreate folds closed: reopen user-opened ones.
 			-- The record is persistent: a rewrite snapping the fold shut
 			-- must not erase the user's choice, so merge instead of replace.
+			-- Folds opened merely by cursor-follow (cursor inside the block)
+			-- are skipped: they must contract again once the cursor leaves.
 			local recorded = _G.OllamaOpenFolds or {}
+			local cursor_folds = _G.OllamaCursorFolds or {}
 			for _, st in ipairs(open_starts) do
-				recorded[st] = true
+				if not cursor_folds[st] then
+					recorded[st] = true
+				end
 			end
 			_G.OllamaOpenFolds = recorded
 			pcall(vim.api.nvim_win_call, win, function()
 				for st in pairs(recorded) do
+					vim.cmd("silent! " .. st .. "foldopen")
+				end
+				-- A rewrite recreates folds closed; the fold the cursor is
+				-- currently inside (opened by cursor-follow) must be
+				-- reopened too, or streaming snaps it shut under the cursor.
+				for st in pairs(_G.OllamaCursorFolds or {}) do
 					vim.cmd("silent! " .. st .. "foldopen")
 				end
 				if final then
