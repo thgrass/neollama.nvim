@@ -554,38 +554,17 @@ M.ask = function(text, on_done)
 			-- buffer rewrites recreate folds closed: reopen user-opened ones.
 			-- The record is persistent: a rewrite snapping the fold shut
 			-- must not erase the user's choice, so merge instead of replace.
-			-- Folds opened merely by cursor-follow (cursor inside the block)
-			-- are skipped: they must contract again once the cursor leaves.
 			local recorded = _G.OllamaOpenFolds or {}
-			local cursor_folds = _G.OllamaCursorFolds or {}
 			for _, st in ipairs(open_starts) do
-				if not cursor_folds[st] then
-					recorded[st] = true
-				end
+				recorded[st] = true
 			end
 			_G.OllamaOpenFolds = recorded
 			pcall(vim.api.nvim_win_call, win, function()
 				for st in pairs(recorded) do
 					vim.cmd("silent! " .. st .. "foldopen")
 				end
-				-- A rewrite recreates folds closed; the fold the cursor is
-				-- currently inside (opened by cursor-follow) must be
-				-- reopened too, or streaming snaps it shut under the cursor.
-				for st in pairs(_G.OllamaCursorFolds or {}) do
-					vim.cmd("silent! " .. st .. "foldopen")
-				end
 				if final then
-					-- Park the cursor on the response start, but tell the
-					-- cursor-follow fold logic to ignore this programmatic
-					-- jump: landing on the think-block header must not
-					-- expand the fold.
-					_G.OllamaSkipCursorFold = from
 					vim.cmd("silent keepjumps normal! " .. from .. "G")
-					-- Clear the skip flag on the next event loop tick so
-					-- later genuine cursor moves are honored again.
-					vim.schedule(function()
-						_G.OllamaSkipCursorFold = nil
-					end)
 				end
 			end)
 		end
