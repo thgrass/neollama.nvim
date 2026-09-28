@@ -214,7 +214,7 @@ function M.close_chat()
 	end
 end
 
--- Get or create a session for the current chat buffer
+-- Get or create a session for the current chat buffer; never opens a chat
 local function session_for_current_chat()
 	local buf = get_current_chat_buf()
 	if not buf then
@@ -224,6 +224,24 @@ local function session_for_current_chat()
 	if not sess then
 		sessions[buf] = new_session(buf)
 		sess = sessions[buf]
+	end
+	return sess
+end
+
+-- Like session_for_current_chat, but automatically opens a chat when none
+-- exists yet. Returns to the previous window so commands invoked from a code
+-- buffer keep working on that buffer. Callers that depend on the current
+-- buffer/window (selections, cursor context) must capture that state first.
+local function session_for_current_chat_auto()
+	local sess = session_for_current_chat()
+	if sess then
+		return sess
+	end
+	local prev_win = vim.api.nvim_get_current_win()
+	M.open_chat_tab()
+	sess = session_for_current_chat()
+	if vim.api.nvim_win_is_valid(prev_win) then
+		pcall(vim.api.nvim_set_current_win, prev_win)
 	end
 	return sess
 end
@@ -385,7 +403,12 @@ end
 
 -- Ask raw text "text" in current chat
 M.ask = function(text, on_done)
-	local sess = session_for_current_chat()
+	local sess
+	if on_done then
+		sess = session_for_current_chat()
+	else
+		sess = session_for_current_chat_auto()
+	end
 	if not sess then
 		no_chat_error()
 		if on_done then
@@ -619,7 +642,7 @@ end
 
 -- Maintain a list of "added buffers" per chat session
 function M.add_current_buffer()
-	local sess = session_for_current_chat()
+	local sess = session_for_current_chat_auto()
 	if not sess then
 		no_chat_error()
 		return
@@ -646,7 +669,7 @@ function M.add_current_buffer()
 end
 
 function M.clear_added_buffers()
-	local sess = session_for_current_chat()
+	local sess = session_for_current_chat_auto()
 	if not sess then
 		no_chat_error()
 		return
@@ -656,7 +679,7 @@ function M.clear_added_buffers()
 end
 
 function M.send_added_buffers()
-	local sess = session_for_current_chat()
+	local sess = session_for_current_chat_auto()
 	if not sess then
 		no_chat_error()
 		return
@@ -687,7 +710,7 @@ end
 
 -- Set or print model for current session
 function M.cmd_model(new_model)
-	local sess = session_for_current_chat()
+	local sess = session_for_current_chat_auto()
 	if not sess then
 		no_chat_error()
 		return
@@ -992,16 +1015,13 @@ end
 -- Ask with automatic context: the symbol under the cursor (treesitter)
 -- or the visible window range, without manually adding buffers.
 function M.ask_with_context(text)
-	local sess = session_for_current_chat()
-	if not sess then
-		no_chat_error()
-		return
-	end
 	if is_chat_buffer(vim.api.nvim_get_current_buf()) then
 		-- Already in the chat: behave like a plain ask
 		M.ask(text)
 		return
 	end
+	-- Capture context from the current buffer before a chat may be opened,
+	-- since opening one switches windows.
 	local ctx, ctx_desc = build_cursor_context()
 	local name = vim.api.nvim_buf_get_name(0)
 	local fname = name ~= "" and name or "[No Name]"
@@ -1062,7 +1082,7 @@ end
 -- Interactive model picker: shows installed models via /api/tags and
 -- switches the current chat to the chosen one.
 function M.select_model()
-	local sess = session_for_current_chat()
+	local sess = session_for_current_chat_auto()
 	if not sess then
 		no_chat_error()
 		return
@@ -1118,7 +1138,7 @@ function M.pull_model(name)
 		vim.notify("Ollama: model name required (e.g. :OllamaPull llama3.1)", vim.log.levels.ERROR)
 		return
 	end
-	local sess = session_for_current_chat()
+	local sess = session_for_current_chat_auto()
 	if not sess then
 		no_chat_error()
 		return
@@ -1183,7 +1203,7 @@ end
 -- Set a per-session request option, e.g. temperature=0.2, num_ctx=8192.
 -- With no argument, prints all effective options for the session.
 function M.cmd_options(arg)
-	local sess = session_for_current_chat()
+	local sess = session_for_current_chat_auto()
 	if not sess then
 		no_chat_error()
 		return
