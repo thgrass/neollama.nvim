@@ -7,7 +7,9 @@ local config = {
 	server_url = "http://127.0.0.1:11434",
 	model = "deepcoder:14b",
 	stream = true,
-	timeout = 0,
+	-- Hard cap on a whole request, in seconds (curl --max-time).
+	-- 0 disables it. Streaming responses that exceed this are aborted.
+	timeout = 300,
 
 	system_prompts = {
 		default = "",
@@ -553,6 +555,8 @@ M.ask = function(text, on_done)
 			if obj.done then
 				finished = true
 				finish(nil)
+				sess.job_id = nil
+				return
 			end
 		end
 	end, function(code, stderr)
@@ -562,7 +566,9 @@ M.ask = function(text, on_done)
 		end
 		if code ~= 0 then
 			local msg = "curl exited with code " .. code
-			if stderr and stderr ~= "" then
+			if code == 28 then
+				msg = "request timed out (config.timeout)"
+			elseif stderr and stderr ~= "" then
 				msg = msg .. ": " .. stderr
 			end
 			finish(msg)

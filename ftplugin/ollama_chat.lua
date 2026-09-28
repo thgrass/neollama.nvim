@@ -8,6 +8,7 @@ vim.opt_local.foldmethod = "expr"
 vim.opt_local.foldenable = true
 vim.opt_local.foldlevel = 0
 vim.opt_local.foldexpr = "v:lua.OllamaFold(v:lnum)"
+vim.opt_local.foldtext = "v:lua.OllamaFoldText()"
 
 -- Cache fence/think state per line to avoid O(n^2) scans in the foldexpr.
 -- Keyed by buffer, invalidated whenever that buffer changes.
@@ -88,6 +89,12 @@ _G.OllamaFold = function(lnum)
 
 	-- Everything else: no folding
 	return 0
+end
+
+_G.OllamaFoldText = function()
+	local lnum = vim.v.foldstart
+	local lines = vim.v.foldend - lnum + 1
+	return ("+-- 🤔 thinking (%d lines) --------------------------------"):format(lines)
 end
 
 -- ---------- Alias table: fence tag -> syntax file basename (no .vim) ----------
