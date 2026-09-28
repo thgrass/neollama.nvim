@@ -181,6 +181,17 @@ vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
 			return
 		end
 		local row = vim.api.nvim_win_get_cursor(win)[1]
+		-- The plugin core parks the cursor on the response's first line
+		-- when a response finishes; for thinking models that line is the
+		-- think-block header.  That programmatic placement must not
+		-- expand the fold: skip it, and keep skipping while the cursor
+		-- stays on that line.
+		if _G.OllamaSkipCursorFold then
+			if _G.OllamaSkipCursorFold == row then
+				return
+			end
+			_G.OllamaSkipCursorFold = nil
+		end
 		local fs = fold_start_of(row)
 		if fs == -1 then
 			if last_inside then

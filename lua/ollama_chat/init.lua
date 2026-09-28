@@ -575,7 +575,17 @@ M.ask = function(text, on_done)
 					vim.cmd("silent! " .. st .. "foldopen")
 				end
 				if final then
+					-- Park the cursor on the response start, but tell the
+					-- cursor-follow fold logic to ignore this programmatic
+					-- jump: landing on the think-block header must not
+					-- expand the fold.
+					_G.OllamaSkipCursorFold = from
 					vim.cmd("silent keepjumps normal! " .. from .. "G")
+					-- Clear the skip flag on the next event loop tick so
+					-- later genuine cursor moves are honored again.
+					vim.schedule(function()
+						_G.OllamaSkipCursorFold = nil
+					end)
 				end
 			end)
 		end
