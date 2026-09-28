@@ -553,6 +553,8 @@ M.ask = function(text, on_done)
 			if obj.done then
 				finished = true
 				finish(nil)
+				sess.job_id = nil
+				return
 			end
 		end
 	end, function(code, stderr)
