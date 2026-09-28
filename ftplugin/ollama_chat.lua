@@ -65,10 +65,15 @@ end
 
 -- Only fold <think>...</think>; never fold inside ``` fenced blocks
 _G.OllamaFold = function(lnum)
-	local buf = vim.api.nvim_win_get_buf(vim.api.nvim_get_current_win())
+	-- Resolve the buffer from the window the folds are computed for, not
+	-- from the "current" one: the foldexpr can run while a different
+	-- buffer/window is focused (e.g. asking from a code tab).
+	local win = vim.api.nvim_get_current_win()
+	local buf = vim.api.nvim_win_get_buf(win)
 	local states = compute_states(buf)
 	local state = states[lnum]
-	local line = vim.fn.getline(lnum)
+	local lines = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)
+	local line = lines[1] or ""
 
 	-- Never fold anything inside fenced code blocks
 	if state == "fence_open" then
@@ -89,6 +94,36 @@ _G.OllamaFold = function(lnum)
 
 	-- Everything else: no folding
 	return 0
+end
+
+-- Re-apply fold options for every window that shows this buffer: new
+-- windows (e.g. reopening via :OllamaChat -> tab sbuffer) don't inherit
+-- window-local fold options, and streaming raises foldlevel only in the
+-- window it drew to.  Entering the chat collapses unless it's streaming.
+local streaming = false
+local function setup_window_folds(win)
+	pcall(vim.api.nvim_set_option_value, "foldmethod", "expr", { win = win })
+	pcall(vim.api.nvim_set_option_value, "foldenable", true, { win = win })
+	pcall(vim.api.nvim_set_option_value, "foldexpr", "v:lua.OllamaFold(v:lnum)", { win = win })
+	pcall(vim.api.nvim_set_option_value, "foldtext", "v:lua.OllamaFoldText()", { win = win })
+	pcall(vim.api.nvim_set_option_value, "foldlevel", streaming and 99 or 0, { win = win })
+end
+
+local group = vim.api.nvim_create_augroup("OllamaChatWinFolds", { clear = true })
+vim.api.nvim_create_autocmd({ "BufWinEnter", "WinEnter" }, {
+	group = group,
+	buffer = bufnr,
+	callback = function()
+		for _, w in ipairs(vim.api.nvim_list_wins()) do
+			if vim.api.nvim_win_is_valid(w) and vim.api.nvim_win_get_buf(w) == bufnr then
+				pcall(setup_window_folds, w)
+			end
+		end
+	end,
+})
+
+_G.OllamaSetStreaming = function(active)
+	streaming = active
 end
 
 _G.OllamaFoldText = function()
