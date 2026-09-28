@@ -525,20 +525,33 @@ M.ask = function(text, on_done)
 		end
 		-- While streaming, raise foldlevel so the think block stays visible
 		-- (folds are recreated closed after every buffer rewrite).  When the
-		-- response completes, restore foldlevel so think blocks render as a
-		-- single closed fold, and move the cursor to the answer.
+		-- response completes, collapse the think block again.  The option is
+		-- set via the win-scoped API so it also works when the chat lives in
+		-- another tabpage; nvim_win_call would fail there silently.
 		local winnr = vim.fn.bufwinnr(buf)
 		if winnr ~= -1 then
 			local win = vim.fn.win_getid(winnr)
 			local from = assist_start_line and (assist_start_line + 1) or 1
-			pcall(vim.api.nvim_win_call, win, function()
-				if final then
-					vim.wo.foldlevel = 0
+			local to = assist_start_line and (assist_start_line + assist_line_count) or 1
+			pcall(vim.api.nvim_set_option_value, "foldlevel", final and 0 or 99, { win = win })
+			if final then
+				pcall(vim.api.nvim_win_call, win, function()
+					vim.cmd("silent! " .. from .. "," .. to .. "foldclose!")
 					vim.cmd("silent keepjumps normal! " .. from .. "G")
-				else
-					vim.wo.foldlevel = 99
-				end
-			end)
+				end)
+				-- Re-assert the collapse after late events (syntax refresh,
+				-- trailing line appends) have re-created the folds.
+				vim.defer_fn(function()
+					if vim.api.nvim_buf_is_valid(buf) and vim.fn.bufwinnr(buf) ~= -1 then
+						pcall(
+							vim.api.nvim_set_option_value,
+							"foldlevel",
+							0,
+							{ win = vim.fn.win_getid(vim.fn.bufwinnr(buf)) }
+						)
+					end
+				end, 150)
+			end
 		end
 		if final then
 			append_lines(buf, { "" })
