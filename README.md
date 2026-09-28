@@ -19,7 +19,7 @@ A minimal Neovim plugin (Lua) to chat with a local **Ollama** instance in a dedi
 - `:OllamaOptions [key=value]` — show or set request options (e.g. `temperature=0.2`, `num_ctx=8192`) for the current chat.
 - `:OllamaInsert [code]` — insert the last response at the cursor (only its first code block with `code`).
 - `:OllamaReplace [code]` — replace the last visual selection with the last response (only its first code block with `code`).
-- `:OllamaAskCtx {text}` — ask with automatic context: the symbol under the cursor (via nvim-treesitter, when available) or the visible window range.
+- `:OllamaAskCtx {text}` — ask with automatic context: the symbol under the cursor (via built-in treesitter, nvim-treesitter, or LSP document symbols) or the visible window range.
 - `:OllamaSetServer {url}` — change the server URL (default: `http://127.0.0.1:11434`).
 
 > The chat buffer is **read-only**; you interact using commands. History remains visible within the tab.  
@@ -123,8 +123,9 @@ Or install manually by copying this folder into your neovim `runtimepath`.
   ```vim
   :OllamaAskCtx what does this function do?
   ```
-  With [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) installed, the enclosing
-  function/class under the cursor is sent; otherwise the visible window range is used.
+  The enclosing function/class under the cursor is detected via built-in treesitter
+  (no plugin needed), then [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter)
+  if installed, then LSP document symbols; as a last resort the visible window range is used.
 
 - Tune the model per chat:
   ```vim
