@@ -19,6 +19,12 @@ local config = {
 		help_explain = "",
 		help_debug = "",
 	},
+
+	-- Default Ollama request options, sent as the `options` field of
+	-- /api/chat.  Values here are merged with per-session overrides.
+	-- See https://github.com/ollama/ollama/blob/main/docs/modelfile.md
+	-- for all available options.
+	options = {},
 }
 
 local function merge_prompts(into, from)
@@ -123,6 +129,8 @@ local function new_session(buf, model)
 		added_buffers = {}, -- list of bufnrs
 		messages = {}, -- chat history for /api/chat
 		job_id = nil, -- active curl job, if any
+		options = {}, -- per-session overrides of config.options
+		last_response = nil, -- last completed assistant response text
 	}
 end
 
@@ -403,11 +411,23 @@ M.ask = function(text, on_done)
 	local invoke_ft = vim.bo[0].filetype
 	local messages = build_messages(sess, full_prompt, invoke_ft)
 
+	-- Merge config-level options with per-session overrides
+	local opts = {}
+	for k, v in pairs(config.options or {}) do
+		opts[k] = v
+	end
+	for k, v in pairs(sess.options or {}) do
+		opts[k] = v
+	end
+
 	local payload_tbl = {
 		model = sess.model or config.model,
 		messages = messages,
 		stream = config.stream,
 	}
+	if next(opts) ~= nil then
+		payload_tbl.options = opts
+	end
 	local payload = vim.fn.json_encode(payload_tbl)
 
 	-- Accumulate the streaming response.  We parse each JSON message and
@@ -477,6 +497,7 @@ M.ask = function(text, on_done)
 		if response_accum ~= "" then
 			table.insert(sess.messages, { role = "user", content = full_prompt })
 			table.insert(sess.messages, { role = "assistant", content = response_accum })
+			sess.last_response = response_accum
 		end
 		if on_done then
 			on_done(response_accum, nil)
@@ -677,6 +698,412 @@ function M.cmd_model(new_model)
 	end
 	sess.model = new_model
 	append_lines(sess.buf, { ("_Switched model to:_ %s"):format(sess.model), "" })
+end
+
+-- ===== Code actions: apply the last response to buffers =====
+
+-- Extract the first fenced code block from a response; returns the
+-- code inside the fences (without the fences) or nil.
+function M.extract_code_block(response)
+	if not response then
+		return nil
+	end
+	local lines = vim.split(response, "\n", { plain = true })
+	local inside = false
+	local code = {}
+	for _, l in ipairs(lines) do
+		if inside then
+			if l:match("^%s*```") then
+				-- closing fence
+				if #code > 0 then
+					return table.concat(code, "\n")
+				end
+				inside = false -- empty block, keep looking
+			else
+				table.insert(code, l)
+			end
+		elseif l:match("^%s*```") then
+			inside = true
+		end
+	end
+	return nil
+end
+
+-- Get the last completed assistant response for the current chat.
+-- code_only=true returns just the first fenced code block.
+function M.get_last_response(code_only)
+	local sess = session_for_current_chat()
+	if not sess then
+		return nil
+	end
+	local resp = sess.last_response
+	if resp and code_only then
+		resp = M.extract_code_block(resp)
+	end
+	return resp
+end
+
+-- Insert the last response at the cursor position of the current buffer.
+-- code_only=true inserts only the first fenced code block.
+function M.insert_last_response(code_only)
+	if is_chat_buffer(vim.api.nvim_get_current_buf()) then
+		vim.notify("Ollama: move to a target buffer first", vim.log.levels.WARN)
+		return
+	end
+	local text = M.get_last_response(code_only)
+	if not text or text == "" then
+		vim.notify("Ollama: no response to insert yet", vim.log.levels.WARN)
+		return
+	end
+	local pos = vim.api.nvim_win_get_cursor(0)
+	local lines = vim.split(text, "\n", { plain = true })
+	local indent = vim.api.nvim_get_current_line():match("^(%s*)")
+	if indent ~= "" then
+		for i, l in ipairs(lines) do
+			if l ~= "" then
+				lines[i] = indent .. l
+			end
+		end
+	end
+	vim.api.nvim_buf_set_lines(0, pos[1], pos[1], false, lines)
+	vim.api.nvim_win_set_cursor(0, { pos[1] + #lines, 0 })
+	vim.cmd([[normal! ==]]) -- reindent inserted lines if an indentexpr exists
+end
+
+-- Replace the last visual selection with the last response.
+-- code_only=true replaces with only the first fenced code block.
+-- The change is undoable with |u|.
+function M.replace_visual_selection_with_response(code_only)
+	if is_chat_buffer(vim.api.nvim_get_current_buf()) then
+		vim.notify("Ollama: move to a target buffer first", vim.log.levels.WARN)
+		return
+	end
+	local text = M.get_last_response(code_only)
+	if not text or text == "" then
+		vim.notify("Ollama: no response to apply yet", vim.log.levels.WARN)
+		return
+	end
+	local s = vim.fn.getpos("'<")
+	local e = vim.fn.getpos("'>")
+	if not s or s[2] <= 0 then
+		vim.notify("Ollama: no visual selection to replace", vim.log.levels.WARN)
+		return
+	end
+	local lines = vim.split(text, "\n", { plain = true })
+	-- Normalize marks: if they are in reverse order, swap them
+	local srow, scol = s[2] - 1, s[3] - 1
+	local erow, ecol = e[2] - 1, e[3]
+	if erow < srow or (erow == srow and ecol < scol) then
+		srow, erow, scol, ecol = erow, srow, ecol, scol
+	end
+	-- For a charwise visual selection, keep text before/after the
+	-- selection on the first/last lines.  Clamp column values to the
+	-- line length: visual selections to end-of-line are encoded as
+	-- col 2147483647, which would overflow the arithmetic below.
+	local first = vim.api.nvim_buf_get_lines(0, srow, srow + 1, false)[1] or ""
+	local last = vim.api.nvim_buf_get_lines(0, erow, erow + 1, false)[1] or ""
+	local before = first:sub(1, math.min(scol, #first))
+	local after = last:sub(math.min(ecol + 1, #last + 1))
+	local new_lines = {}
+	for i, l in ipairs(lines) do
+		if i == 1 then
+			new_lines[i] = before .. l
+		elseif i == #lines then
+			new_lines[i] = l .. after
+		else
+			new_lines[i] = l
+		end
+	end
+	if #lines == 1 then
+		new_lines[1] = before .. lines[1] .. after
+	end
+	vim.api.nvim_buf_set_lines(0, srow, erow + 1, false, new_lines)
+	vim.api.nvim_win_set_cursor(0, { srow + #new_lines, 0 })
+end
+
+-- ===== Smarter context: symbol under cursor or visible window =====
+
+-- Build context text around the cursor: the treesitter node for the
+-- enclosing definition when nvim-treesitter is available, otherwise the
+-- visible window range.
+local function build_cursor_context()
+	local buf = vim.api.nvim_get_current_buf()
+
+	-- Preferred: treesitter node for the enclosing definition
+	local ok_ts, ts_utils = pcall(require, "nvim-treesitter.ts_utils")
+	if ok_ts then
+		local node = ts_utils.get_node_at_cursor()
+		while node do
+			local t = node:type()
+			if
+				t:match("^function")
+				or t:match("^method")
+				or t == "class_definition"
+				or t == "class_declaration"
+				or t == "function_declaration"
+			then
+				local sr, sc, er, ec = node:range()
+				local text = table.concat(vim.api.nvim_buf_get_text(buf, sr, sc, er, ec, {}), "\n")
+				if text ~= "" then
+					return text, "symbol (treesitter)"
+				end
+			end
+			node = node:parent()
+		end
+	end
+
+	-- Fallback: visible window range
+	local win = vim.api.nvim_get_current_win()
+	local top = vim.fn.line("w0", win)
+	local bot = vim.fn.line("w$", win)
+	if top > 0 and bot >= top then
+		local text = table.concat(vim.api.nvim_buf_get_lines(buf, top - 1, bot, false), "\n")
+		return text, ("lines %d-%d"):format(top, bot)
+	end
+	return nil, nil
+end
+
+-- Ask with automatic context: the symbol under the cursor (treesitter)
+-- or the visible window range, without manually adding buffers.
+function M.ask_with_context(text)
+	local sess = session_for_current_chat()
+	if not sess then
+		no_chat_error()
+		return
+	end
+	if is_chat_buffer(vim.api.nvim_get_current_buf()) then
+		-- Already in the chat: behave like a plain ask
+		M.ask(text)
+		return
+	end
+	local ctx, ctx_desc = build_cursor_context()
+	local name = vim.api.nvim_buf_get_name(0)
+	local fname = name ~= "" and name or "[No Name]"
+	local prompt
+	if ctx then
+		prompt =
+			string.format("Context (%s from file %s):\n\n%s\n\nQuestion: %s", ctx_desc, fname, ctx, text)
+	else
+		prompt = text
+	end
+	M.ask(prompt)
+end
+
+-- ===== Model management =====
+
+-- GET /api/tags: return the list of installed model names to callback.
+function M.list_models(on_done)
+	local url = (config.server_url or "http://127.0.0.1:11434") .. "/api/tags"
+	local cmd = {
+		"curl",
+		"-s",
+		"--connect-timeout",
+		"10",
+		url,
+	}
+	local out = {}
+	vim.fn.jobstart(cmd, {
+		stdout_buffered = true,
+		on_stdout = function(_, data)
+			if data then
+				for _, l in ipairs(data) do
+					table.insert(out, l)
+				end
+			end
+		end,
+		on_exit = function(_, code)
+			if code ~= 0 then
+				vim.notify("Ollama: could not reach server (" .. code .. ")", vim.log.levels.ERROR)
+				on_done(nil)
+				return
+			end
+			local ok, obj = pcall(vim.fn.json_decode, table.concat(out, "\n"))
+			if not ok or type(obj) ~= "table" or not obj.models then
+				vim.notify("Ollama: unexpected /api/tags response", vim.log.levels.ERROR)
+				on_done(nil)
+				return
+			end
+			local names = {}
+			for _, m in ipairs(obj.models) do
+				table.insert(names, m.name)
+			end
+			table.sort(names)
+			on_done(names)
+		end,
+	})
+end
+
+-- Interactive model picker: shows installed models via /api/tags and
+-- switches the current chat to the chosen one.
+function M.select_model()
+	local sess = session_for_current_chat()
+	if not sess then
+		no_chat_error()
+		return
+	end
+	M.list_models(function(names)
+		if not names or #names == 0 then
+			return
+		end
+		vim.ui.select(names, { prompt = "Select model:" }, function(choice)
+			if not choice then
+				return
+			end
+			M.cmd_model(choice)
+		end)
+	end)
+end
+
+-- Cache of installed model names for command completion, refreshed
+-- lazily with a TTL so completion stays responsive.
+local model_names_cache = nil
+local model_names_cache_time = 0
+local MODEL_CACHE_TTL = 60 -- seconds
+
+local function refresh_model_cache()
+	local now = os.time()
+	if model_names_cache and (now - model_names_cache_time) < MODEL_CACHE_TTL then
+		return model_names_cache
+	end
+	M.list_models(function(names)
+		if names then
+			model_names_cache = names
+			model_names_cache_time = now
+		end
+	end)
+	return model_names_cache
+end
+
+-- Completion function for :OllamaModel offering installed models.
+function M.model_completion(arg_lead, _cmd_line, _cursor_pos)
+	local names = refresh_model_cache() or {}
+	local matches = {}
+	for _, n in ipairs(names) do
+		if n:find(arg_lead, 1, true) == 1 then
+			table.insert(matches, n)
+		end
+	end
+	return matches
+end
+
+-- POST /api/pull: pull a model, streaming progress into the chat.
+function M.pull_model(name)
+	if not name or name == "" then
+		vim.notify("Ollama: model name required (e.g. :OllamaPull llama3.1)", vim.log.levels.ERROR)
+		return
+	end
+	local sess = session_for_current_chat()
+	if not sess then
+		no_chat_error()
+		return
+	end
+	local url = (config.server_url or "http://127.0.0.1:11434") .. "/api/pull"
+	local payload = vim.fn.json_encode({ model = name, stream = true })
+	local cmd = {
+		"curl",
+		"-s",
+		"-N",
+		"-X",
+		"POST",
+		"-H",
+		"Content-Type: application/json",
+		"--connect-timeout",
+		"10",
+		url,
+		"--data-binary",
+		"@-",
+	}
+	append_lines(sess.buf, { ("_Pulling model:_ %s"):format(name), "" })
+	local pending = ""
+	local last_status = nil
+	local job = vim.fn.jobstart(cmd, {
+		stdin = "pipe",
+		stdout_buffered = false,
+		on_stdout = function(_, data)
+			if not data or #data == 0 then
+				return
+			end
+			pending = pending .. table.concat(data, "\n")
+			local lines = vim.split(pending, "\n", { plain = true })
+			pending = table.remove(lines) or ""
+			for _, line in ipairs(lines) do
+				if line ~= "" then
+					local ok, obj = pcall(vim.fn.json_decode, line)
+					if ok and type(obj) == "table" and obj.status then
+						if obj.status ~= last_status then
+							last_status = obj.status
+							append_lines(sess.buf, { ("  %s"):format(obj.status) })
+						end
+					end
+				end
+			end
+		end,
+		on_exit = function(_, code)
+			if code ~= 0 then
+				append_lines(sess.buf, { ("**Error:** pull failed (curl code %s)"):format(code), "" })
+			else
+				append_lines(sess.buf, { ("_Pulled model:_ %s"):format(name), "" })
+			end
+		end,
+	})
+	if job > 0 then
+		vim.api.nvim_chan_send(job, payload)
+		pcall(vim.fn.chanclose, job, "stdin")
+	end
+end
+
+-- ===== Model options (temperature, num_ctx, ...) =====
+
+-- Set a per-session request option, e.g. temperature=0.2, num_ctx=8192.
+-- With no argument, prints all effective options for the session.
+function M.cmd_options(arg)
+	local sess = session_for_current_chat()
+	if not sess then
+		no_chat_error()
+		return
+	end
+	if not arg or arg == "" then
+		local effective = {}
+		for k, v in pairs(config.options or {}) do
+			effective[k] = v
+		end
+		for k, v in pairs(sess.options) do
+			effective[k] = v
+		end
+		local keys = {}
+		for k in pairs(effective) do
+			table.insert(keys, k)
+		end
+		table.sort(keys)
+		local items = { "_Effective request options:_" }
+		for _, k in ipairs(keys) do
+			table.insert(items, ("  %s = %s"):format(k, tostring(effective[k])))
+		end
+		if #keys == 0 then
+			table.insert(items, "  (none set)")
+		end
+		table.insert(items, "")
+		append_lines(sess.buf, items)
+		return
+	end
+	local key, raw = arg:match("^(%S+)%s*=%s*(.+)$")
+	if not key then
+		vim.notify("Ollama: expected key=value (e.g. temperature=0.2)", vim.log.levels.ERROR)
+		return
+	end
+	-- Accept numbers, true/false, and bare strings
+	local value
+	if raw:match("^%-?%d+%.?%d*$") then
+		value = tonumber(raw)
+	elseif raw == "true" then
+		value = true
+	elseif raw == "false" then
+		value = false
+	else
+		value = raw
+	end
+	sess.options[key] = value
+	append_lines(sess.buf, { ("_Set option:_ %s = %s"):format(key, tostring(value)), "" })
 end
 
 function M.set_server_url(url)

@@ -51,7 +51,52 @@ end, {})
 -- :OllamaModel [model?] (print or set model for current chat)
 vim.api.nvim_create_user_command("OllamaModel", function(opts)
 	M.cmd_model(opts.args ~= "" and opts.args or nil)
+end, {
+	nargs = "?",
+	complete = function(arg_lead, cmd_line, cursor_pos)
+		return M.model_completion(arg_lead, cmd_line, cursor_pos)
+	end,
+})
+
+-- :OllamaModels (pick an installed model interactively)
+vim.api.nvim_create_user_command("OllamaModels", function(_)
+	M.select_model()
+end, {})
+
+-- :OllamaPull {model} (pull a model, progress shown in chat)
+vim.api.nvim_create_user_command("OllamaPull", function(opts)
+	M.pull_model(opts.args)
+end, { nargs = 1 })
+
+-- :OllamaOptions [key=value?] (show or set request options)
+vim.api.nvim_create_user_command("OllamaOptions", function(opts)
+	M.cmd_options(opts.args ~= "" and opts.args or nil)
 end, { nargs = "?" })
+
+-- :OllamaInsert [code?] (insert last response at cursor; code-only if arg given)
+vim.api.nvim_create_user_command("OllamaInsert", function(opts)
+	M.insert_last_response(opts.args ~= "")
+end, {
+	nargs = "?",
+	complete = function()
+		return { "code" }
+	end,
+})
+
+-- :OllamaReplace [code?] (replace visual selection with last response)
+vim.api.nvim_create_user_command("OllamaReplace", function(opts)
+	M.replace_visual_selection_with_response(opts.args ~= "")
+end, {
+	nargs = "?",
+	complete = function()
+		return { "code" }
+	end,
+})
+
+-- :OllamaAskCtx {text} (ask with the symbol under cursor / visible range as context)
+vim.api.nvim_create_user_command("OllamaAskCtx", function(opts)
+	M.ask_with_context(opts.args)
+end, { nargs = "+" })
 
 -- :OllamaSetServer {url}
 vim.api.nvim_create_user_command("OllamaSetServer", function(opts)
