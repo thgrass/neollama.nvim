@@ -22,7 +22,10 @@ A minimal Neovim plugin (Lua) to chat with a local **Ollama** instance in a dedi
 - `:OllamaAskCtx {text}` — ask with automatic context: the symbol under the cursor (via built-in treesitter, nvim-treesitter, or LSP document symbols) or the visible window range.
 - `:OllamaSetServer {url}` — change the server URL (default: `http://127.0.0.1:11434`).
 
-> The chat buffer is **read-only**; you interact using commands. History remains visible within the tab.  
+> The chat buffer is **read-only**; you interact using commands. History remains visible within the tab.
+> Most commands **automatically open a chat** when none exists yet (`:OllamaAsk`, `:OllamaSendSelection`,
+> `:OllamaSendBuffer`, `:OllamaAddBuffer`, `:OllamaSendAddedBuffers`, `:OllamaModel`, `:OllamaModels`,
+> `:OllamaPull`, `:OllamaOptions`, `:OllamaAskCtx`, ...) — you only need `:OllamaChat` if you want to open one explicitly.  
 > This plugin uses external `curl` to call Ollama's HTTP API (`/api/chat`), either streamed to neovim or not (set in config with `stream=true|false`).  
 > The full conversation history is sent with each request, so the model remembers previous exchanges in the session.
 
