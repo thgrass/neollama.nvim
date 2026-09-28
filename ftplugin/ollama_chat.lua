@@ -104,7 +104,14 @@ local function setup_window_folds(win)
 	pcall(vim.api.nvim_set_option_value, "foldenable", true, { win = win })
 	pcall(vim.api.nvim_set_option_value, "foldexpr", "v:lua.OllamaFold(v:lnum)", { win = win })
 	pcall(vim.api.nvim_set_option_value, "foldtext", "v:lua.OllamaFoldText()", { win = win })
+	-- Default to collapsed, but preserve folds the user opened (za):
+	-- entering/leaving the window must not contract them again.
 	pcall(vim.api.nvim_set_option_value, "foldlevel", 0, { win = win })
+	pcall(vim.api.nvim_win_call, win, function()
+		for open_st in pairs(_G.OllamaOpenFolds or {}) do
+			vim.cmd("silent! " .. open_st .. "foldopen")
+		end
+	end)
 end
 
 local group = vim.api.nvim_create_augroup("OllamaChatWinFolds", { clear = true })
@@ -117,6 +124,86 @@ vim.api.nvim_create_autocmd({ "BufWinEnter", "WinEnter" }, {
 				pcall(setup_window_folds, w)
 			end
 		end
+	end,
+})
+
+-- Folds the user opened manually in this buffer, by start line; kept in
+-- sync by the plugin core on every display rewrite.  Window-enter setup
+-- reopens these so tab changes never contract them.
+_G.OllamaOpenFolds = {}
+
+-- Cursor-follow folding: moving the cursor into a collapsed think block
+-- expands it; moving out collapses it again.  Folds opened this way are
+-- tracked in _G.OllamaCursorFolds so the plugin core does not mistake
+-- them for user-opened folds (which must stay open).  Folds the user
+-- toggled open with za are recorded in _G.OllamaOpenFolds and are never
+-- auto-closed.
+if _G.OllamaCursorFolds == nil then
+	_G.OllamaCursorFolds = {}
+end
+local last_inside = nil
+
+-- Start line of the fold containing `row`, or -1 if none.
+local function fold_start_of(row)
+	local fs = vim.fn.foldclosed(row)
+	if fs ~= -1 then
+		-- cursor sits inside a closed fold (its header line included)
+		return fs
+	end
+	if vim.fn.foldlevel(row) == 0 then
+		return -1
+	end
+	-- Inside an open fold: walk up to its start line.
+	local l = row
+	while l > 1 and vim.fn.foldlevel(l - 1) >= vim.fn.foldlevel(l) do
+		l = l - 1
+	end
+	return l
+end
+
+local function close_cursor_fold(st)
+	-- Only close folds that were opened by cursor-follow, not ones the
+	-- user toggled open manually (recorded in _G.OllamaOpenFolds).
+	if (_G.OllamaOpenFolds or {})[st] then
+		return
+	end
+	if vim.fn.foldclosed(st) == -1 then
+		vim.cmd("silent! " .. st .. "foldclose")
+	end
+end
+
+vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
+	group = group,
+	buffer = bufnr,
+	callback = function()
+		local win = vim.api.nvim_get_current_win()
+		if vim.api.nvim_win_get_buf(win) ~= bufnr then
+			return
+		end
+		local row = vim.api.nvim_win_get_cursor(win)[1]
+		local fs = fold_start_of(row)
+		if fs == -1 then
+			if last_inside then
+				close_cursor_fold(last_inside)
+				_G.OllamaCursorFolds[last_inside] = nil
+				last_inside = nil
+			end
+			return
+		end
+		if fs == last_inside then
+			return
+		end
+		-- entering a different fold: close the previous cursor-opened one
+		if last_inside then
+			close_cursor_fold(last_inside)
+			_G.OllamaCursorFolds[last_inside] = nil
+		end
+		if vim.fn.foldclosed(fs) ~= -1 then
+			-- collapsed: open it and remember it was cursor-opened
+			_G.OllamaCursorFolds[fs] = true
+			vim.cmd("silent! " .. fs .. "foldopen")
+		end
+		last_inside = fs
 	end,
 })
 
