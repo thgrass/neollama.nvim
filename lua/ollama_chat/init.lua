@@ -561,6 +561,9 @@ M.ask = function(text, on_done)
 
 	local function finish(err)
 		sess.job_id = nil
+		if _G.OllamaSetStreaming then
+			_G.OllamaSetStreaming(false)
+		end
 		-- Only touch the display if some content was already shown
 		if response_accum ~= "" or assist_start_line then
 			update_display(err == nil)
@@ -584,6 +587,9 @@ M.ask = function(text, on_done)
 		response_accum = ""
 	end
 
+	if _G.OllamaSetStreaming then
+		_G.OllamaSetStreaming(true)
+	end
 	local job
 	job = http_request(payload, function(line)
 		-- Ignore late frames from a job that was cancelled or superseded
