@@ -16,7 +16,7 @@ jobs:
         with:
           version: latest
           token: ${{ secrets.GITHUB_TOKEN }}
-          directories: "lua plugin ftplugin"
+          args: "--check lua plugin ftplugin"
 
       - name: Install Luacheck
         run: |
