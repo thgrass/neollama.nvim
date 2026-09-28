@@ -65,10 +65,15 @@ end
 
 -- Only fold <think>...</think>; never fold inside ``` fenced blocks
 _G.OllamaFold = function(lnum)
-	local buf = vim.api.nvim_win_get_buf(vim.api.nvim_get_current_win())
+	-- Resolve the buffer from the window the folds are computed for, not
+	-- from the "current" one: the foldexpr can run while a different
+	-- buffer/window is focused (e.g. asking from a code tab).
+	local win = vim.api.nvim_get_current_win()
+	local buf = vim.api.nvim_win_get_buf(win)
 	local states = compute_states(buf)
 	local state = states[lnum]
-	local line = vim.fn.getline(lnum)
+	local lines = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)
+	local line = lines[1] or ""
 
 	-- Never fold anything inside fenced code blocks
 	if state == "fence_open" then

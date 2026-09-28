@@ -532,11 +532,12 @@ M.ask = function(text, on_done)
 		if winnr ~= -1 then
 			local win = vim.fn.win_getid(winnr)
 			local from = assist_start_line and (assist_start_line + 1) or 1
-			local to = assist_start_line and (assist_start_line + assist_line_count) or 1
 			pcall(vim.api.nvim_set_option_value, "foldlevel", final and 0 or 99, { win = win })
 			if final then
 				pcall(vim.api.nvim_win_call, win, function()
-					vim.cmd("silent! " .. from .. "," .. to .. "foldclose!")
+					-- foldlevel=99 during streaming re-opened older think
+					-- blocks too, so collapse the whole buffer again.
+					vim.cmd("silent! 1,$foldclose!")
 					vim.cmd("silent keepjumps normal! " .. from .. "G")
 				end)
 				-- Re-assert the collapse after late events (syntax refresh,
