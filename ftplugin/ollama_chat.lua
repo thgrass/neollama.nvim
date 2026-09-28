@@ -104,7 +104,14 @@ local function setup_window_folds(win)
 	pcall(vim.api.nvim_set_option_value, "foldenable", true, { win = win })
 	pcall(vim.api.nvim_set_option_value, "foldexpr", "v:lua.OllamaFold(v:lnum)", { win = win })
 	pcall(vim.api.nvim_set_option_value, "foldtext", "v:lua.OllamaFoldText()", { win = win })
+	-- Default to collapsed, but preserve folds the user opened (za):
+	-- entering/leaving the window must not contract them again.
 	pcall(vim.api.nvim_set_option_value, "foldlevel", 0, { win = win })
+	pcall(vim.api.nvim_win_call, win, function()
+		for open_st in pairs(_G.OllamaOpenFolds or {}) do
+			vim.cmd("silent! " .. open_st .. "foldopen")
+		end
+	end)
 end
 
 local group = vim.api.nvim_create_augroup("OllamaChatWinFolds", { clear = true })
@@ -119,6 +126,11 @@ vim.api.nvim_create_autocmd({ "BufWinEnter", "WinEnter" }, {
 		end
 	end,
 })
+
+-- Folds the user opened manually in this buffer, by start line; kept in
+-- sync by the plugin core on every display rewrite.  Window-enter setup
+-- reopens these so tab changes never contract them.
+_G.OllamaOpenFolds = {}
 
 _G.OllamaFoldText = function()
 	local lnum = vim.v.foldstart

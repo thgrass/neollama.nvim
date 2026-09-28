@@ -523,34 +523,50 @@ M.ask = function(text, on_done)
 			end)
 			assist_line_count = #lines
 		end
-		-- Keep the think block collapsed at all times, including while it
-		-- is being streamed; users who want to read the reasoning expand
-		-- the fold manually (za).  The option is set via the win-scoped API
-		-- so it also works when the chat lives in another tabpage;
-		-- nvim_win_call would fail there silently.
+		-- Think blocks are collapsed by default, but a fold the user
+		-- expanded manually (za) must stay expanded across the buffer
+		-- rewrites streaming performs, and keep that state when the
+		-- response finishes.  Capture currently open fold starts before
+		-- the rewrite, then reopen them after it.
 		local winnr = vim.fn.bufwinnr(buf)
 		if winnr ~= -1 then
 			local win = vim.fn.win_getid(winnr)
 			local from = assist_start_line and (assist_start_line + 1) or 1
-			pcall(vim.api.nvim_set_option_value, "foldlevel", 0, { win = win })
-			if final then
-				pcall(vim.api.nvim_win_call, win, function()
-					vim.cmd("silent! 1,$foldclose!")
-					vim.cmd("silent keepjumps normal! " .. from .. "G")
-				end)
-				-- Re-assert the collapse after late events (syntax refresh,
-				-- trailing line appends) have re-created the folds.
-				vim.defer_fn(function()
-					if vim.api.nvim_buf_is_valid(buf) and vim.fn.bufwinnr(buf) ~= -1 then
-						pcall(
-							vim.api.nvim_set_option_value,
-							"foldlevel",
-							0,
-							{ win = vim.fn.win_getid(vim.fn.bufwinnr(buf)) }
-						)
+			local open_starts = {}
+			pcall(vim.api.nvim_win_call, win, function()
+				local total = vim.api.nvim_buf_line_count(buf)
+				local l = 1
+				while l <= total do
+					local fc = vim.fn.foldclosed(l)
+					if fc > 0 then
+						-- inside a closed fold: skip past it
+						l = vim.fn.foldclosedend(l) + 1
+					elseif vim.fn.foldlevel(l) > 0 then
+						-- an open fold starts here; remember it
+						open_starts[#open_starts + 1] = l
+						local fe = vim.fn.foldclosedend(l)
+						l = fe > l and fe + 1 or l + 1
+					else
+						l = l + 1
 					end
-				end, 150)
+				end
+			end)
+			-- buffer rewrites recreate folds closed: reopen user-opened ones.
+			-- The record is persistent: a rewrite snapping the fold shut
+			-- must not erase the user's choice, so merge instead of replace.
+			local recorded = _G.OllamaOpenFolds or {}
+			for _, st in ipairs(open_starts) do
+				recorded[st] = true
 			end
+			_G.OllamaOpenFolds = recorded
+			pcall(vim.api.nvim_win_call, win, function()
+				for st in pairs(recorded) do
+					vim.cmd("silent! " .. st .. "foldopen")
+				end
+				if final then
+					vim.cmd("silent keepjumps normal! " .. from .. "G")
+				end
+			end)
 		end
 		if final then
 			append_lines(buf, { "" })
