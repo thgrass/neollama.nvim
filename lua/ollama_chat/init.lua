@@ -460,6 +460,7 @@ M.ask = function(text, on_done)
 	-- incrementally to provide streaming feedback.  When `done` is true,
 	-- the full exchange is appended to the session history.
 	local response_accum = ""
+	local thinking_accum = ""
 	-- Track where the assistant output starts (0-based index) and how many
 	-- buffer lines we've written, so we can update them in-place.
 	local assist_start_line = nil
@@ -483,7 +484,17 @@ M.ask = function(text, on_done)
 			return
 		end
 		-- Split accumulated response into lines to preserve newline boundaries.
-		local content_lines = vim.split(response_accum, "\n", { plain = true })
+		-- Thinking-model reasoning (message.thinking) is wrapped in explicit
+		--  think tags so it folds like inline  think blocks.
+		local shown = response_accum
+		if thinking_accum ~= "" then
+			if response_accum ~= "" then
+				shown = "<think>\n" .. thinking_accum .. "\n</think>\n" .. response_accum
+			else
+				shown = "<think>\n" .. thinking_accum
+			end
+		end
+		local content_lines = vim.split(shown, "\n", { plain = true })
 		if #content_lines == 0 then
 			content_lines = { "" }
 		end
@@ -576,10 +587,22 @@ M.ask = function(text, on_done)
 				end
 				return
 			end
-			local content = obj.message and obj.message.content
-			if content and content ~= vim.NIL then
-				response_accum = response_accum .. content
-				update_display(false)
+			local msg = obj.message
+			if type(msg) == "table" then
+				local thinking = msg.thinking
+				if thinking and thinking ~= vim.NIL and thinking ~= "" then
+					thinking_accum = thinking_accum .. thinking
+					update_display(false)
+				end
+				local content = msg.content
+				if content and content ~= vim.NIL then
+					response_accum = response_accum .. content
+					update_display(false)
+				end
+				if msg.reasoning and msg.reasoning ~= vim.NIL and msg.reasoning ~= "" then
+					thinking_accum = thinking_accum .. msg.reasoning
+					update_display(false)
+				end
 			end
 			if obj.done then
 				finished = true
