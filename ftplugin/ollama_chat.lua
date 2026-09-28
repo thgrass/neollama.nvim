@@ -98,15 +98,13 @@ end
 
 -- Re-apply fold options for every window that shows this buffer: new
 -- windows (e.g. reopening via :OllamaChat -> tab sbuffer) don't inherit
--- window-local fold options, and streaming raises foldlevel only in the
--- window it drew to.  Entering the chat collapses unless it's streaming.
-local streaming = false
+-- window-local fold options.  Think blocks stay collapsed by default.
 local function setup_window_folds(win)
 	pcall(vim.api.nvim_set_option_value, "foldmethod", "expr", { win = win })
 	pcall(vim.api.nvim_set_option_value, "foldenable", true, { win = win })
 	pcall(vim.api.nvim_set_option_value, "foldexpr", "v:lua.OllamaFold(v:lnum)", { win = win })
 	pcall(vim.api.nvim_set_option_value, "foldtext", "v:lua.OllamaFoldText()", { win = win })
-	pcall(vim.api.nvim_set_option_value, "foldlevel", streaming and 99 or 0, { win = win })
+	pcall(vim.api.nvim_set_option_value, "foldlevel", 0, { win = win })
 end
 
 local group = vim.api.nvim_create_augroup("OllamaChatWinFolds", { clear = true })
@@ -121,10 +119,6 @@ vim.api.nvim_create_autocmd({ "BufWinEnter", "WinEnter" }, {
 		end
 	end,
 })
-
-_G.OllamaSetStreaming = function(active)
-	streaming = active
-end
 
 _G.OllamaFoldText = function()
 	local lnum = vim.v.foldstart
