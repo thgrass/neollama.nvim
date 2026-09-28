@@ -65,7 +65,7 @@ end
 
 -- Only fold <think>...</think>; never fold inside ``` fenced blocks
 _G.OllamaFold = function(lnum)
-	local buf = vim.api.nvim_get_current_buf()
+	local buf = vim.api.nvim_win_get_buf(vim.api.nvim_get_current_win())
 	local states = compute_states(buf)
 	local state = states[lnum]
 	local line = vim.fn.getline(lnum)
